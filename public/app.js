@@ -5,10 +5,13 @@
 
   /* ================= 状态 ================= */
   var state = {
-    revision: null,
-    locked: false,
+    // 当前编辑上下文：'board' = 正式版图；{kind:'scheme', id} = 某份试排方案
+    target: 'board',
+    schemeMeta: null,         // {id,name,sourceRevision,revision,updatedAt}（target 为方案时）
+    revision: null,           // 当前上下文的修订号（正式版图 revision 或方案 revision）
+    locked: false,            // 仅正式版图有锁定概念；编辑方案时恒为 false
     doc: null,                 // {fabric, defects:[{id,name,points}], pieces:[...], placements:[...]}
-    mode: 'setup',             // setup | layout
+    mode: 'setup',             // schemes | setup | layout | cutlist
     dirty: false,
     conflicts: null,           // 最近一次保存被拒返回的冲突
     selectedId: null,
@@ -20,6 +23,7 @@
     panning: null,
     hoverId: null
   };
+  var isScheme = function () { return state.target !== 'board'; };
 
   var PIECE_COLORS = ['#2563eb', '#0d9488', '#7c3aed', '#db2777', '#ea580c', '#4d7c0f', '#0891b2', '#a16207'];
   function pieceColor(id) {
@@ -59,15 +63,33 @@
   function loadBoard() {
     return api('GET', '/api/board').then(function (r) {
       if (r.status !== 200) throw new Error(r.d.message || '读取版图失败');
+      state.target = 'board';
+      state.schemeMeta = null;
       applyServerRow(r.d);
     });
   }
+
+  function loadScheme(id) {
+    return api('GET', '/api/schemes/' + id).then(function (r) {
+      if (r.status !== 200) throw new Error(r.d.message || '读取方案失败');
+      state.target = { kind: 'scheme', id: id };
+      state.schemeMeta = {
+        id: r.d.id, name: r.d.name,
+        sourceRevision: r.d.sourceRevision, revision: r.d.revision,
+        updatedAt: r.d.updatedAt
+      };
+      applyServerRow({ revision: r.d.revision, locked: false, doc: r.d.doc, updatedAt: r.d.updatedAt });
+    });
+  }
+
   function applyServerRow(row) {
     state.revision = row.revision;
-    state.locked = row.locked;
+    // 方案上下文永不锁定；正式版图上下文取服务器 locked
+    state.locked = isScheme() ? false : !!row.locked;
     state.doc = row.doc;
     state.dirty = false;
     state.conflicts = null;
+    if (state.schemeMeta) state.schemeMeta.revision = row.revision;
     if (state.selectedId && !state.doc.placements.some(function (p) { return p.id === state.selectedId; })) {
       state.selectedId = null;
     }
@@ -573,7 +595,7 @@
 
   /* ================= 保存 / 锁定 ================= */
   function saveBoard() {
-    if (state.locked) { alert('版图已锁定，禁止改动'); return; }
+    if (!isScheme() && state.locked) { alert('正式版图已锁定，禁止改动'); return; }
     // 先在本地做一次快速结构校验（服务端是唯一权威）
     var local = validateLocally();
     if (local.length) {
@@ -582,27 +604,39 @@
       alert('本地检查未通过，未提交服务器：\n\n' + local.map(function (c) { return '· ' + c.message; }).join('\n'));
       return;
     }
+    var scheme = isScheme();
+    var url = scheme ? ('/api/schemes/' + state.schemeMeta.id) : '/api/board';
     $('saveState').textContent = '保存中…';
-    api('PUT', '/api/board', { revision: state.revision, doc: state.doc }).then(function (r) {
+    api('PUT', url, { revision: state.revision, doc: state.doc }).then(function (r) {
       if (r.status === 200) {
-        applyServerRow(r.d.row);
-        state.revision = r.d.revision;
+        var payload = scheme ? r.d.scheme : r.d.row;
+        var rev = r.d.revision;
+        applyServerRow({ revision: rev, locked: false, doc: payload.doc, updatedAt: payload.updatedAt });
+        state.revision = rev;
         state.locked = false;
         renderChrome();
-        flash('✓ 已保存，新修订号 ' + r.d.revision);
+        flash('✓ 已保存' + (scheme ? '方案' : '正式版图') + '，新修订号 ' + rev);
       } else if (r.status === 422) {
-        // 校验失败：服务器整稿未变；标出冲突对象与原因
+        // 校验失败：服务器整稿/整份方案未变；标出冲突对象与原因
         state.conflicts = r.d.conflicts;
-        state.revision = state.revision; // 本地稿保留（可能未保存），服务器稿不变
         renderConflicts(); renderSidebar(); draw();
       } else if (r.status === 409) {
-        if (confirm('保存被拒：您的修订号 ' + state.revision + ' 已过期，服务器已有新稿（修订号 ' +
-          r.d.current.revision + '）。\n\n确定放弃本地未保存改动并载入新稿吗？\n（选“取消”可先自行备份本地稿）')) {
-          applyServerRow(r.d.current);
+        var what = scheme ? '方案' : '正式版图';
+        if (confirm('保存被拒：您的' + what + '修订号 ' + state.revision + ' 已过期，服务器已有新版本（修订号 ' +
+          r.d.current.revision + '）。\n\n确定放弃本地未保存改动并载入新版本吗？\n（选“取消”可先自行备份本地稿）')) {
+          if (scheme) {
+            state.schemeMeta.revision = r.d.current.revision;
+            applyServerRow({ revision: r.d.current.revision, locked: false, doc: r.d.current.doc, updatedAt: r.d.current.updatedAt });
+          } else {
+            applyServerRow(r.d.current);
+          }
           fitView();
         }
       } else if (r.status === 423) {
-        alert('版图已锁定，禁止改动。'); loadBoard();
+        alert('正式版图已锁定，禁止改动。'); loadBoard();
+      } else if (r.status === 404 && scheme) {
+        alert('该试排方案已被他人删除。');
+        openSchemesTab();
       } else {
         alert('保存失败：' + (r.d.message || r.status));
       }
@@ -610,6 +644,7 @@
   }
 
   function lockBoard() {
+    if (isScheme()) return; // 方案无锁定
     if (state.locked) return;
     // 若有未排数量，明确提示（仍允许锁定，清单会保留未排数）
     var pending = [];
@@ -674,7 +709,8 @@
     var dock = $('conflictDock');
     if (!cs.length) { dock.classList.add('hidden'); return; }
     dock.classList.remove('hidden');
-    $('conflictTitle').textContent = '⚠ 保存被拒绝：' + cs.length + ' 处冲突 —— 整张版图未改动';
+    $('conflictTitle').textContent = '⚠ 保存被拒绝：' + cs.length + ' 处冲突 —— ' +
+      (isScheme() ? '整份方案未改动' : '整张版图未改动');
     var ul = $('conflictList');
     ul.innerHTML = '';
     cs.forEach(function (c) {
@@ -815,6 +851,13 @@
   /* ================= 裁切清单 ================= */
   function renderCutlist() {
     var box = $('cutlistBox');
+    if (isScheme()) {
+      box.innerHTML = '<p class="hint">当前编辑的是试排方案「' + esc(state.schemeMeta.name) +
+        '」（方案修订号 ' + state.revision + '，来源正式版图修订号 ' + state.schemeMeta.sourceRevision +
+        '）。<br>方案没有裁切清单——请先在「🧪 试排方案」页将其切为正式版图并锁定。</p>';
+      $('btnDownloadCsv').disabled = true;
+      return;
+    }
     if (!state.locked) {
       box.innerHTML = '<p class="hint">尚未锁定。当前修订号 ' + state.revision + '，锁定后此处显示正式清单，并可下载 CSV。</p>';
       $('btnDownloadCsv').disabled = true;
@@ -843,30 +886,49 @@
   }
 
   /* ================= 模式切换 / 顶栏 ================= */
+  var MODES = [['Schemes', 'schemes'], ['Setup', 'setup'], ['Layout', 'layout'], ['Cutlist', 'cutlist']];
   function switchMode(mode) {
     state.mode = mode;
-    ['Setup', 'Layout', 'Cutlist'].forEach(function (m) {
-      $('tab' + m).classList.toggle('active', m.toLowerCase() === mode);
-      $('panel' + m).classList.toggle('hidden', m.toLowerCase() !== mode);
+    MODES.forEach(function (pair) {
+      $('tab' + pair[0]).classList.toggle('active', pair[1] === mode);
+      $('panel' + pair[0]).classList.toggle('hidden', pair[1] !== mode);
     });
     if (state.draw) cancelDraft();
+    if (mode === 'schemes') renderSchemes();
     if (mode === 'layout') renderSidebar();
     if (mode === 'cutlist') renderCutlist();
+    renderChrome();
     draw();
   }
 
   function renderChrome() {
-    $('revBadge').textContent = '修订号 ' + (state.revision == null ? '—' : state.revision) + (state.dirty ? '（有未保存改动）' : '');
+    var scheme = isScheme();
+    // 编辑方案时显示方案徽标；在“试排方案”管理页时显示“正式版图”徽标
+    $('targetBadge').classList.toggle('hidden', !(scheme || state.mode === 'schemes'));
+    if (scheme) {
+      $('targetBadge').textContent = '🧪 ' + state.schemeMeta.name + '（来源 r' + state.schemeMeta.sourceRevision + '）';
+      $('targetBadge').classList.add('scheme');
+      $('targetBadge').classList.remove('board');
+    } else {
+      $('targetBadge').textContent = '正式版图';
+      $('targetBadge').classList.remove('scheme');
+      $('targetBadge').classList.add('board');
+    }
+    $('revBadge').textContent = (scheme ? '方案修订号 ' : '修订号 ') +
+      (state.revision == null ? '—' : state.revision) + (state.dirty ? '（有未保存改动）' : '');
     $('revBadge').classList.toggle('dirty', state.dirty);
-    $('lockBadge').classList.toggle('hidden', !state.locked);
-    $('lockedBanner').classList.toggle('hidden', !state.locked);
-    if (state.locked) $('lockedRev').textContent = state.revision;
-    $('btnSave').disabled = state.locked;
-    $('btnLock').disabled = state.locked;
+    $('lockBadge').classList.toggle('hidden', scheme || !state.locked);
+    $('lockedBanner').classList.toggle('hidden', scheme || !state.locked);
+    if (!scheme && state.locked) $('lockedRev').textContent = state.revision;
+    $('btnSave').disabled = !scheme && state.locked;
+    $('btnSave').textContent = scheme ? '保存方案' : '保存版图';
+    // 仅正式版图可锁定；方案编辑时隐藏锁定按钮
+    $('btnLock').classList.toggle('hidden', scheme || state.mode === 'schemes');
+    $('btnLock').disabled = !scheme && state.locked;
     $('saveState').textContent = state.dirty ? '● 未保存' : '已同步';
     $('zoomLabel').textContent = Math.round(state.view.scale / 4 * 100) + '%';
-    // 设置模式下输入框只读
-    var ro = state.locked;
+    // 设置模式下输入框只读（方案即使在正式版图锁定后仍可编辑）
+    var ro = !scheme && state.locked;
     ['fabricW', 'fabricH', 'peName', 'peQty', 'peMargin', 'peAngles'].forEach(function (id) { $(id).disabled = ro; });
     $('btnDrawDefect').disabled = ro; $('btnDrawPiece').disabled = ro; $('btnAddPiece').disabled = ro;
   }
@@ -879,6 +941,179 @@
     renderSidebar();
     if (state.mode === 'cutlist') renderCutlist();
     draw();
+  }
+
+  /* ================= 试排方案管理 ================= */
+  function openSchemesTab() {
+    switchMode('schemes');
+  }
+
+  function renderSchemes() {
+    var ul = $('schemeList');
+    ul.innerHTML = '';
+    var state2 = $('schemeBoardState');
+
+    Promise.all([api('GET', '/api/board'), api('GET', '/api/schemes')]).then(function (rs) {
+      var rb = rs[0], rl = rs[1];
+      if (rb.status !== 200) { state2.textContent = '无法读取正式版图状态：' + (rb.d.message || rb.status); return; }
+      var board = rb.d;
+      state2.innerHTML = board.locked
+        ? '🔒 正式版图已锁定（修订号 ' + board.revision + '）：不能新建方案，也不能将方案切为正式版图；已有方案仍可查看与编辑。'
+        : '正式版图当前未锁定（修订号 ' + board.revision + '）：可新建方案，也可将来源为该修订号的方案切为正式版图。';
+      $('btnCreateScheme').disabled = board.locked;
+
+      var schemes = rl.status === 200 ? rl.d.schemes : [];
+      if (!schemes.length) {
+        ul.innerHTML = '<li class="scheme-empty">还没有试排方案。点击上方按钮，从当前正式版图（修订号 ' +
+          board.revision + '）复制一份开始试排。</li>';
+        return;
+      }
+      schemes.forEach(function (s) {
+        var li = document.createElement('li');
+        li.className = 'scheme-card';
+        if (isScheme() && state.schemeMeta.id === s.id) li.classList.add('active');
+
+        var head = document.createElement('div');
+        head.className = 'sc-head';
+        var nm = document.createElement('b');
+        nm.textContent = s.name;
+        var badges = document.createElement('span');
+        badges.className = 'sc-badges';
+        badges.innerHTML =
+          '<span class="mini-badge">来源 r' + s.sourceRevision + '</span>' +
+          '<span class="mini-badge rev">方案 r' + s.revision + '</span>' +
+          (s.sourceRevision !== board.revision ? '<span class="mini-badge warn">正式版已变动</span>' : '') +
+          (board.locked ? '<span class="mini-badge lock">版图已锁</span>' : '');
+        head.appendChild(nm); head.appendChild(badges);
+        li.appendChild(head);
+
+        var rem = document.createElement('div');
+        rem.className = 'sc-rem';
+        rem.innerHTML = s.groups.map(function (g) {
+          return '<span class="' + (g.remaining > 0 ? 'cl-rem' : 'cl-done') + '">' +
+            esc(g.name) + ' 未排 ' + g.remaining + '/' + g.required + '</span>';
+        }).join('　');
+        li.appendChild(rem);
+
+        var actions = document.createElement('div');
+        actions.className = 'sc-actions btn-row';
+        var mk = function (txt, cls, fn) {
+          var b = document.createElement('button');
+          b.className = 'btn mini ' + (cls || '');
+          b.textContent = txt; b.onclick = fn; return b;
+        };
+        actions.appendChild(mk('打开编辑', 'primary', function () { openScheme(s.id); }));
+        var canPromote = !board.locked && s.sourceRevision === board.revision;
+        var pb = mk('⬆ 切为正式版图', 'danger-outline', function () { promoteScheme(s); });
+        if (!canPromote) {
+          pb.disabled = true;
+          pb.title = board.locked ? '正式版图已锁定' : '正式版图已不在该方案的来源修订号';
+        }
+        actions.appendChild(pb);
+        actions.appendChild(mk('改名', '', function () { renameScheme(s); }));
+        actions.appendChild(mk('删除', 'danger-outline', function () { deleteScheme(s); }));
+        li.appendChild(actions);
+        ul.appendChild(li);
+      });
+    }).catch(function (err) { state2.textContent = '加载失败：' + err.message; });
+  }
+
+  function confirmDiscard(what) {
+    if (state.dirty) return confirm('当前' + what + '有未保存改动，放弃并切换？');
+    return true;
+  }
+
+  function createScheme() {
+    if (!confirmDiscard(isScheme() ? '方案' : '正式版图')) return;
+    var name = prompt('新方案名称', '试排方案 ' + new Date().toLocaleString());
+    if (name === null) return;
+    api('POST', '/api/schemes', { name: name.trim() || undefined }).then(function (r) {
+      if (r.status === 201) {
+        flash('✓ 已从正式版图（修订号 ' + r.d.scheme.sourceRevision + '）创建方案');
+        loadScheme(r.d.scheme.id).then(function () { switchMode('layout'); fitView(); });
+      } else if (r.status === 423) {
+        alert('正式版图已锁定，不能创建新方案。');
+        renderSchemes();
+      } else {
+        alert('创建失败：' + (r.d.message || r.status));
+      }
+    });
+  }
+
+  function openScheme(id) {
+    if (!confirmDiscard(isScheme() ? '方案' : '正式版图')) return;
+    loadScheme(id).then(fitView).catch(function (err) { alert(err.message); });
+  }
+
+  function backToBoard() {
+    if (!confirmDiscard('方案')) return;
+    loadBoard().then(fitView).then(function () { switchMode('setup'); });
+  }
+
+  function renameScheme(s) {
+    if (isScheme() && state.schemeMeta.id === s.id && state.dirty) {
+      if (!confirm('当前方案有未保存改动，改名前将丢弃这些改动，继续？')) return;
+    }
+    var name = prompt('修改方案名称', s.name);
+    if (name === null) return;
+    name = name.trim();
+    if (!name) return alert('名称不能为空');
+    api('PATCH', '/api/schemes/' + s.id, { revision: s.revision, name: name }).then(function (r) {
+      if (r.status === 200) {
+        if (isScheme() && state.schemeMeta.id === s.id) {
+          state.schemeMeta.name = r.d.scheme.name;
+          state.revision = r.d.revision;
+        }
+        flash('✓ 已改名');
+        renderSchemes();
+      } else if (r.status === 409) {
+        alert('方案修订号已过期（当前 ' + r.d.current.revision + '），请刷新列表后重试。');
+        renderSchemes();
+      } else {
+        alert('改名失败：' + (r.d.message || r.status));
+      }
+    });
+  }
+
+  function deleteScheme(s) {
+    var editing = isScheme() && state.schemeMeta.id === s.id;
+    if (editing && state.dirty && !confirm('该方案有未保存改动，仍要删除？')) return;
+    if (!editing && !confirm('确定删除方案「' + s.name + '」？正式版图与其他方案不受影响。')) return;
+    api('DELETE', '/api/schemes/' + s.id).then(function (r) {
+      if (r.status === 200) {
+        flash('✓ 已删除方案「' + s.name + '」');
+        if (editing) loadBoard().then(function () { switchMode('schemes'); });
+        else renderSchemes();
+      } else if (r.status === 404) {
+        alert('方案已不存在。'); renderSchemes();
+      } else {
+        alert('删除失败：' + (r.d.message || r.status));
+      }
+    });
+  }
+
+  function promoteScheme(s) {
+    if (isScheme() && state.schemeMeta.id === s.id && state.dirty) {
+      if (!confirm('当前方案有未保存改动，晋升将使用服务器上已保存的版本（未保存改动会丢失），继续？')) return;
+    }
+    if (!confirm('将方案「' + s.name + '」（方案修订号 ' + s.revision + '，来源正式版图修订号 ' + s.sourceRevision +
+      '）切为正式版图？\n\n要求：方案修订号未过期、正式版图仍处于修订号 ' + s.sourceRevision +
+      ' 且未锁定。\n成功后正式版图修订号递增，其他方案保持原样。')) return;
+    api('POST', '/api/schemes/' + s.id + '/promote', { revision: s.revision }).then(function (r) {
+      if (r.status === 200) {
+        alert('✓ 切换成功：正式版图修订号已递增为 ' + r.d.revision + '，其他方案保持原样。');
+        loadBoard().then(function () { switchMode('layout'); fitView(); });
+      } else if (r.status === 409 || r.status === 423 || r.status === 422 || r.status === 404) {
+        var extra = '';
+        if (r.status === 422 && r.d.conflicts) {
+          extra = '\n\n冲突：\n' + r.d.conflicts.slice(0, 5).map(function (c) { return '· ' + c.message; }).join('\n');
+        }
+        alert('未能切为正式版图（未产生任何变更）：\n' + (r.d.reason || r.d.message || r.status) + extra);
+        renderSchemes();
+      } else {
+        alert('切换失败：' + (r.d.message || r.status));
+      }
+    });
   }
 
   /* ================= 工具 ================= */
@@ -900,12 +1135,22 @@
   }
 
   /* ================= 事件绑定 ================= */
+  $('tabSchemes').onclick = function () {
+    if (!confirmDiscard(isScheme() ? '方案' : '正式版图')) return;
+    // 进入方案管理页：上下文不强制切换（可能正在编辑某方案，从管理页仍可返回）；
+    // 但管理页列出的是服务器实时数据。保留当前编辑上下文，仅切视图。
+    switchMode('schemes');
+  };
   $('tabSetup').onclick = function () { switchMode('setup'); };
   $('tabLayout').onclick = function () { switchMode('layout'); };
   $('tabCutlist').onclick = function () { switchMode('cutlist'); };
+  $('btnCreateScheme').onclick = createScheme;
+  $('btnBackToBoard').onclick = backToBoard;
   $('btnReload').onclick = function () {
+    var what = isScheme() ? '方案' : '正式版图';
     if (state.dirty && !confirm('放弃本地未保存改动并从服务器重新载入？')) return;
-    loadBoard().then(fitView);
+    if (isScheme()) loadScheme(state.schemeMeta.id).then(fitView);
+    else loadBoard().then(fitView);
   };
   $('btnSave').onclick = saveBoard;
   $('btnLock').onclick = lockBoard;

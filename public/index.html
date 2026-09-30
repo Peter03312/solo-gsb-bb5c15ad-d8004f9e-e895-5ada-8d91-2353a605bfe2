@@ -10,11 +10,13 @@
 <header class="topbar">
   <div class="brand">🧵 服装裁片排版编辑器</div>
   <div class="mode-tabs">
+    <button id="tabSchemes" class="tab">🧪 试排方案</button>
     <button id="tabSetup" class="tab active">① 布面设置</button>
     <button id="tabLayout" class="tab">② 排版编辑</button>
     <button id="tabCutlist" class="tab">③ 裁切清单</button>
   </div>
   <div class="rev-info">
+    <span id="targetBadge" class="badge target hidden">正式版图</span>
     <span id="revBadge" class="badge">修订号 —</span>
     <span id="lockBadge" class="badge lock hidden">🔒 已锁定</span>
     <span id="saveState" class="save-state"></span>
@@ -22,13 +24,29 @@
   <div class="top-actions">
     <button id="btnReload" class="btn">↻ 重新载入</button>
     <button id="btnSave" class="btn primary">保存版图</button>
-    <button id="btnLock" class="btn danger">锁定版图</button>
+    <button id="btnLock" class="btn danger hidden">锁定版图</button>
   </div>
 </header>
 
 <div class="main">
   <!-- ============ 左侧栏 ============ -->
   <aside class="sidebar">
+    <!-- 试排方案管理面板 -->
+    <section id="panelSchemes" class="panel hidden">
+      <h2>命名试排方案</h2>
+      <p class="hint">
+        从<b>未锁定</b>的正式版图复制出多份命名方案，分别调整布面、缺陷、款式与裁片摆放。<br>
+        每份方案记录<b>来源修订号</b>与<b>方案自身修订号</b>；保存沿用同一套几何 / 数量 / 间距校验，失败整份方案不变。<br>
+        「切为正式版图」要求：方案修订号未过期、正式版图仍停留在来源修订号且未锁定；成功后正式版图修订号递增，其余方案保持原样。
+      </p>
+      <div class="btn-row">
+        <button id="btnCreateScheme" class="btn primary">＋ 从当前正式版图新建方案</button>
+        <button id="btnBackToBoard" class="btn">↩ 返回正式版图编辑</button>
+      </div>
+      <p id="schemeBoardState" class="hint"></p>
+      <ul id="schemeList" class="scheme-list"></ul>
+    </section>
+
     <!-- 设置面板 -->
     <section id="panelSetup" class="panel">
       <h2>布幅（布面）</h2>
