@@ -12,7 +12,8 @@
   <div class="mode-tabs">
     <button id="tabSetup" class="tab active">① 布面设置</button>
     <button id="tabLayout" class="tab">② 排版编辑</button>
-    <button id="tabCutlist" class="tab">③ 裁切清单</button>
+    <button id="tabSchemes" class="tab">③ 试排方案</button>
+    <button id="tabCutlist" class="tab">④ 裁切清单</button>
   </div>
   <div class="rev-info">
     <span id="revBadge" class="badge">修订号 —</span>
@@ -21,7 +22,9 @@
   </div>
   <div class="top-actions">
     <button id="btnReload" class="btn">↻ 重新载入</button>
+    <button id="btnNewSchemeTop" class="btn">🧪 新建试排</button>
     <button id="btnSave" class="btn primary">保存版图</button>
+    <button id="btnPromote" class="btn promote hidden">⬆ 切换为正式版图</button>
     <button id="btnLock" class="btn danger">锁定版图</button>
   </div>
 </header>
@@ -92,6 +95,20 @@
       <div id="statsBox" class="stats"></div>
     </section>
 
+    <!-- 试排方案面板 -->
+    <section id="panelSchemes" class="panel hidden">
+      <h2>试排方案</h2>
+      <p class="hint">从未锁定的正式版图创建命名试排方案，可分别调整布面、缺陷、款式与裁片摆放。
+        每份方案记录<b>来源修订号</b>与自身修订号；保存沿用同一套几何/数量/间距校验，
+        切换为正式版图时需来源版图仍停留在该修订号且未锁定。</p>
+      <div class="btn-row">
+        <button id="btnNewScheme" class="btn primary">＋ 从当前正式版图创建方案</button>
+        <button id="btnRefreshSchemes" class="btn">↻ 刷新列表</button>
+      </div>
+      <p id="schemeBoardHint" class="hint"></p>
+      <ul id="schemeList" class="scheme-list"></ul>
+    </section>
+
     <!-- 裁切清单面板 -->
     <section id="panelCutlist" class="panel hidden">
       <h2>裁切清单</h2>
@@ -106,6 +123,13 @@
   <!-- ============ 画布 ============ -->
   <main class="canvas-wrap">
     <div id="lockedBanner" class="locked-banner hidden">🔒 版图已锁定（修订号 <span id="lockedRev"></span>），禁止任何改动；可查看与下载裁切清单。</div>
+    <div id="schemeBanner" class="scheme-banner hidden">
+      🧪 试排方案「<span id="schemeBannerName"></span>」 ·
+      方案修订号 <span id="schemeBannerRev"></span> ·
+      来源正式版图修订号 <span id="schemeBannerSrc"></span>
+      <span id="schemeBannerDirty" class="hidden">（有未保存改动）</span>
+      <button id="btnExitScheme" class="btn mini">↩ 返回正式版图</button>
+    </div>
     <div id="drawBanner" class="draw-banner hidden"></div>
     <canvas id="canvas"></canvas>
     <div class="canvas-hud">
