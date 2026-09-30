@@ -1,0 +1,17 @@
+{
+  "name": "garment-marker-editor",
+  "version": "1.0.0",
+  "description": "服装打样裁片排版（版图）编辑器：画布交互、SQLite 持久化、服务端全量几何校验与乐观锁",
+  "main": "server/server.js",
+  "scripts": {
+    "start": "node server/server.js",
+    "init-db": "node server/init-db.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "express": "^4.21.0"
+  }
+}

@@ -1,0 +1,23 @@
+# 一键启动：docker compose up --build
+services:
+  marker:
+    build: .
+    image: garment-marker-editor:latest
+    container_name: garment-marker-editor
+    ports:
+      - "${HOST_PORT:-3000}:3000"          # 宿主机端口可用 HOST_PORT 覆盖
+    environment:
+      PORT: 3000
+      DB_PATH: /data/marker.db
+    volumes:
+      - marker-data:/data                  # SQLite 数据持久化（含 WAL 文件）
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/board').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  marker-data:

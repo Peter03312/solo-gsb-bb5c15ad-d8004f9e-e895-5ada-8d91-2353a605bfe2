@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>服装裁片排版编辑器</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">🧵 服装裁片排版编辑器</div>
+  <div class="mode-tabs">
+    <button id="tabSetup" class="tab active">① 布面设置</button>
+    <button id="tabLayout" class="tab">② 排版编辑</button>
+    <button id="tabCutlist" class="tab">③ 裁切清单</button>
+  </div>
+  <div class="rev-info">
+    <span id="revBadge" class="badge">修订号 —</span>
+    <span id="lockBadge" class="badge lock hidden">🔒 已锁定</span>
+    <span id="saveState" class="save-state"></span>
+  </div>
+  <div class="top-actions">
+    <button id="btnReload" class="btn">↻ 重新载入</button>
+    <button id="btnSave" class="btn primary">保存版图</button>
+    <button id="btnLock" class="btn danger">锁定版图</button>
+  </div>
+</header>
+
+<div class="main">
+  <!-- ============ 左侧栏 ============ -->
+  <aside class="sidebar">
+    <!-- 设置面板 -->
+    <section id="panelSetup" class="panel">
+      <h2>布幅（布面）</h2>
+      <div class="form-row"><label>布幅宽 W (cm)</label><input id="fabricW" type="number" step="0.1" min="0"></div>
+      <div class="form-row"><label>布幅高 H (cm)</label><input id="fabricH" type="number" step="0.1" min="0"></div>
+      <p class="hint">坐标原点在布面左下角，x 向右、y 向上（画布显示向下），单位 cm。</p>
+
+      <h2>缺陷区（不可用区域）</h2>
+      <div class="row-between">
+        <label class="small">在画布上单击添加缺陷多边形顶点，双击/回车闭合</label>
+      </div>
+      <div class="btn-row">
+        <button id="btnDrawDefect" class="btn">✎ 绘制缺陷</button>
+        <button id="btnCancelDraw" class="btn hidden">取消绘制</button>
+      </div>
+      <ul id="defectList" class="item-list"></ul>
+
+      <h2>裁片款式库</h2>
+      <div id="pieceEditor">
+        <div class="form-row"><label>名称</label><input id="peName" type="text" placeholder="如：前身片"></div>
+        <div class="form-row2">
+          <div><label>所需数量</label><input id="peQty" type="number" step="1" min="1" value="2"></div>
+          <div><label>安全间距(cm)</label><input id="peMargin" type="number" step="0.1" min="0" value="1.5"></div>
+        </div>
+        <div class="form-row"><label>允许旋转角度（°，逗号分隔，0~360）</label>
+          <input id="peAngles" type="text" value="0,90,180,270"></div>
+        <div class="btn-row">
+          <button id="btnDrawPiece" class="btn">✎ 在画布上绘制裁片轮廓</button>
+        </div>
+        <p id="peDrawHint" class="hint hidden">单击逐点描绘（不可自交、不可翻面由系统保证），双击/回车闭合</p>
+        <div class="btn-row">
+          <button id="btnAddPiece" class="btn primary">＋ 新增裁片款式</button>
+          <button id="btnCancelPieceDraw" class="btn hidden">取消</button>
+        </div>
+      </div>
+      <ul id="pieceList" class="item-list"></ul>
+    </section>
+
+    <!-- 排版面板 -->
+    <section id="panelLayout" class="panel hidden">
+      <h2>放置裁片</h2>
+      <p class="hint">从款式库点击「放置」加入布面；拖曳移动；选中后按角度按钮或 R 键旋转（只允许白名单角度，不能翻面）。</p>
+      <div id="placeCatalog"></div>
+
+      <h2>当前选中</h2>
+      <div id="selectionInfo" class="selection-empty">未选中任何裁片</div>
+      <div id="selectionCtl" class="hidden">
+        <div class="form-row2">
+          <div><label>位置 X (cm)</label><input id="selX" type="number" step="0.1"></div>
+          <div><label>位置 Y (cm)</label><input id="selY" type="number" step="0.1"></div>
+        </div>
+        <div class="form-row"><label>角度</label><div id="selAngles" class="angle-chips"></div></div>
+        <div class="btn-row">
+          <button id="btnRotateCCW" class="btn">⟲ 左转</button>
+          <button id="btnRotateCW" class="btn">右转 ⟳</button>
+          <button id="btnDelete" class="btn danger-outline">删除本片</button>
+        </div>
+      </div>
+
+      <h2>排料统计</h2>
+      <div id="statsBox" class="stats"></div>
+    </section>
+
+    <!-- 裁切清单面板 -->
+    <section id="panelCutlist" class="panel hidden">
+      <h2>裁切清单</h2>
+      <p class="hint">版图锁定后输出正式清单：每片位置、角度、各款所需/已排/未排数量。</p>
+      <div id="cutlistBox"></div>
+      <div class="btn-row">
+        <button id="btnDownloadCsv" class="btn primary" disabled>⬇ 下载 CSV 裁切清单</button>
+      </div>
+    </section>
+  </aside>
+
+  <!-- ============ 画布 ============ -->
+  <main class="canvas-wrap">
+    <div id="lockedBanner" class="locked-banner hidden">🔒 版图已锁定（修订号 <span id="lockedRev"></span>），禁止任何改动；可查看与下载裁切清单。</div>
+    <div id="drawBanner" class="draw-banner hidden"></div>
+    <canvas id="canvas"></canvas>
+    <div class="canvas-hud">
+      <span id="zoomLabel">100%</span>
+      <button id="zoomIn" class="btn mini">＋</button>
+      <button id="zoomOut" class="btn mini">－</button>
+      <button id="zoomFit" class="btn mini">适应</button>
+      <button id="zoomOne" class="btn mini">1:1</button>
+      <label class="chk"><input type="checkbox" id="showMargin"> 显示间距圈</label>
+      <span class="hud-hint">滚轮缩放 · 空格/中键拖动画布 · R 旋转 · Delete 删除</span>
+    </div>
+  </main>
+</div>
+
+<!-- 冲突面板 -->
+<div id="conflictDock" class="conflict-dock hidden">
+  <div class="conflict-head">
+    <span id="conflictTitle">⚠ 保存被拒绝：0 处冲突 —— 整张版图未改动</span>
+    <button id="btnCloseConflicts" class="btn mini">✕</button>
+  </div>
+  <ul id="conflictList"></ul>
+</div>
+
+<script src="/shared/geom.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
